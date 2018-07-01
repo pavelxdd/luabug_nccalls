@@ -1,0 +1,30 @@
+diff --git a/src/ldo.c b/src/ldo.c
+index f2f9062..202516d 100644
+--- a/src/ldo.c
++++ b/src/ldo.c
+@@ -646,6 +646,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs,
+                                       int *nresults) {
+   int status;
+   unsigned short oldnny = L->nny;  /* save "number of non-yieldable" calls */
++  unsigned short incnCcalls = (from) ? from->nCcalls + 1 : 1;
+   lua_lock(L);
+   if (L->status == LUA_OK) {  /* may be starting a coroutine */
+     if (L->ci != &L->base_ci)  /* not in base level? */
+@@ -653,7 +654,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs,
+   }
+   else if (L->status != LUA_YIELD)
+     return resume_error(L, "cannot resume dead coroutine", nargs);
+-  L->nCcalls = (from) ? from->nCcalls + 1 : 1;
++  L->nCcalls += incnCcalls;
+   if (L->nCcalls >= LUAI_MAXCCALLS)
+     return resume_error(L, "C stack overflow", nargs);
+   luai_userstateresume(L, nargs);
+@@ -677,7 +678,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs,
+   *nresults = (status == LUA_YIELD) ? L->ci->u2.nyield
+                                     : cast_int(L->top - (L->ci->func + 1));
+   L->nny = oldnny;  /* restore 'nny' */
+-  L->nCcalls--;
++  L->nCcalls -= incnCcalls;
+   lua_unlock(L);
+   return status;
+ }
