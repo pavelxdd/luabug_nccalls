@@ -66,6 +66,8 @@ static int luabug_thread_resume(lua_State *L, int status, lua_KContext ctx)
   if (res != LUA_OK && res != LUA_YIELD)
     return luaL_error(data->LG, "coroutine error: %s", lua_tostring(L, -1));
 
+  lua_pop(L, nres);
+
   if (res == LUA_OK && data->callback)
     data->callback(L, res, (lua_KContext)data);
 
@@ -166,6 +168,8 @@ int main(void)
 
     if (res != LUA_OK && res != LUA_YIELD)
       return luaL_error(LG, "coroutine error: %s", lua_tostring(L, -1));
+
+    lua_pop(L, nres);
 
     if (res == LUA_OK)
       break;
