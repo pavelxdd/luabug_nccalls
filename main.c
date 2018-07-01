@@ -12,7 +12,8 @@
 void luaU_assert(const char *msg, const char *file, const int line)
 {
   printf("lua_assert: %s at %s:%d\n", msg, file, line);
-  char *b = NULL; *(++b) = 0; // segfault to get backtrace in gdb
+  // segfault to get backtrace in gdb
+  char *b = NULL; *(++b) = 0;
   exit(1);
 }
 
@@ -28,11 +29,16 @@ static Ldata *Llist = NULL;
 static inline void luabug_gc(lua_State *L)
 {
   lua_assert(L);
-  printf("%-20s | L=%p, nCcalls=%d/%d, nci=%d\n", "before lua_gc",
-         L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
+
+  puts(" --- ");
+  printf("%-20s | L=%p lua_gc nCcalls=%d (max=%d), nci=%d\n",
+         __func__, L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
   lua_gc(L, LUA_GCCOLLECT, 0);
-  printf("%-20s | L=%p, nCcalls=%d/%d, nci=%d\n", "after lua_gc",
-         L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
+  printf("%-20s | L=%p lua_gc nCcalls=%d (max=%d), nci=%d\n",
+         __func__, L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
+  puts(" --- ");
+
+  // it should fail at some point
   lua_assert(L->nCcalls < LUAI_MAXCCALLS);
 }
 
@@ -41,47 +47,36 @@ static lua_State *luabug_newthread(lua_State *L)
   lua_assert(L);
   lua_State *TL = lua_newthread(L);
   lua_assert(TL);
-  printf("%-20s | L=%p from %p\n", "create thread", TL, L);
+  printf("%-20s | L=%p lua_newthread L=%p\n", __func__, L, TL);
   return TL;
 }
 
 static int luabug_thread_resume(lua_State *L, int status, lua_KContext ctx)
 {
-  puts(__func__);
-  lua_assert(L);
-
   Ldata *data = (Ldata *)ctx;
+  printf("%-20s | L=%p data=%p, status=%d\n", __func__, L, data, status);
+  lua_assert(L);
   lua_assert(data && L == data->L);
   lua_assert(status == LUA_OK || status == LUA_YIELD);
 
-  if (lua_rawgeti(data->L, LUA_REGISTRYINDEX, data->Fref) != LUA_TFUNCTION)
-    return luaL_error(L, "not a function");
+  int nres;
+  const int res = lua_resume(L, data->LG, 0, &nres);
+  printf("%-20s | L=%p lua_resume res=%d, nres=%d\n", __func__, L, res, nres);
 
-  int res, nres;
-  switch ((res = lua_resume(L, NULL, 0, &nres))) {
-    case LUA_OK:
-      printf("%-20s | LUA_OK\n", __func__);
-      if (data->callback)
-        data->callback(L, res, (lua_KContext)data);
-      break;
+  if (res != LUA_OK && res != LUA_YIELD)
+    return luaL_error(data->LG, "coroutine error: %s", lua_tostring(L, -1));
 
-    case LUA_YIELD:
-      printf("%-20s | LUA_YIELD\n", __func__);
-      break;
-
-    default:
-      return luaL_error(data->LG, "coroutine error: %s", lua_tostring(L, -1));
-  }
+  if (res == LUA_OK && data->callback)
+    data->callback(L, res, (lua_KContext)data);
 
   return 0;
 }
 
 static int luabug_thread_stop(lua_State *L, int status, lua_KContext ctx)
 {
-  puts(__func__);
-  lua_assert(L);
-
   Ldata *data = (Ldata *)ctx;
+  printf("%-20s | L=%p data=%p, status=%d\n", __func__, L, data, status);
+  lua_assert(L);
   lua_assert(data && L == data->L);
   lua_assert(status == LUA_OK);
 
@@ -105,89 +100,83 @@ static int luabug_thread_stop(lua_State *L, int status, lua_KContext ctx)
 
 static int luabug_thread_k(lua_State *L, int status, lua_KContext ctx)
 {
-  puts(__func__);
+  const int Fref = (int)ctx;
+  printf("%-20s | L=%p ref=%d, status=%d\n", __func__, L, Fref, status);
   lua_assert(L);
 
-  Ldata *data = (Ldata *)ctx;
-  lua_assert(data && data->LG && !data->L);
-
+  Ldata *data = malloc(sizeof(Ldata));
+  data->LG = L;
   data->L = luabug_newthread(data->LG);
   data->Lref = luaL_ref(data->LG, LUA_REGISTRYINDEX);
+  data->Fref = Fref;
   data->callback = luabug_thread_stop;
   data->next = Llist;
   Llist = data;
+
+  if (lua_rawgeti(data->L, LUA_REGISTRYINDEX, data->Fref) != LUA_TFUNCTION)
+    return luaL_error(L, "not a function");
 
   return luabug_thread_resume(data->L, lua_status(data->L), (lua_KContext)data);
 }
 
 static int luabug_thread(lua_State *L)
 {
-  puts(__func__);
+  printf("%-20s | L=%p\n", __func__, L);
   lua_assert(L);
-
   luaL_argcheck(L, lua_isfunction(L, 1), 1, "not a function");
   lua_settop(L, 1);
-
-  Ldata *data = calloc(1, sizeof(Ldata));
-  data->LG = L;
-  data->Fref = luaL_ref(data->LG, LUA_REGISTRYINDEX);
-
-  return lua_yieldk(L, 0, (lua_KContext)data, luabug_thread_k);
+  return lua_yieldk(L, 0, (lua_KContext)luaL_ref(L, LUA_REGISTRYINDEX), luabug_thread_k);
 }
 
 static inline int luabug_resume(void)
 {
-  puts(__func__);
+  Ldata *data = Llist;
+  lua_State *L = data ? data->L : NULL;
+  printf("%-20s | L=%p data=%p\n", __func__, L, data);
 
-  for (Ldata *data = Llist; data; data = data->next) {
-    lua_assert(data->L);
-    printf("%-20s | L=%p\n", "resume thread", data->L);
-    luabug_thread_resume(data->L, lua_status(data->L), (lua_KContext)data);
-    return 1;
-  }
+  if (data)
+    luabug_thread_resume(L, lua_status(L), (lua_KContext)data);
 
-  return 0;
+  return !!data;
 }
 
-#define luabug_resume_all() while (luabug_resume() > 0) {}
+#define luabug_resume_all() while (luabug_resume()) {}
 
 int main(void)
 {
-  lua_State *LGlobal = luaL_newstate();
-  luaL_openlibs(LGlobal);
+  lua_State *LG = luaL_newstate();
+  printf("%-20s | L=%p\n", __func__, LG);
+  luaL_openlibs(LG);
 
-  lua_State *L = luabug_newthread(LGlobal);
-  int Lref = luaL_ref(LGlobal, LUA_REGISTRYINDEX);
+  lua_State *L = luabug_newthread(LG);
+  int Lref = luaL_ref(LG, LUA_REGISTRYINDEX);
   lua_register(L, "create_thread", luabug_thread);
 
   if (luaL_dofile(L, "main.lua"))
-    return luaL_error(LGlobal, "luaL_dofile error: %s", lua_tostring(L, -1));
+    return luaL_error(LG, "luaL_dofile error: %s", lua_tostring(L, -1));
 
   if (!lua_isfunction(L, -1))
-    return luaL_error(LGlobal, "script result is not a function");
+    return luaL_error(LG, "script result is not a function");
 
-  for (int res = -1; res != LUA_OK; ) {
+  while (1) {
     int nres;
-    switch ((res = lua_resume(L, NULL, 0, &nres))) {
-      case LUA_OK:
-        printf("%-20s | LUA_OK\n", __func__);
-        break;
+    // passing NULL instead of LG makes it easier to reproduce a bug
+    const int res = lua_resume(L, NULL, 0, &nres);
+    printf("%-20s | L=%p lua_resume res=%d, nres=%d\n", __func__, L, res, nres);
 
-      case LUA_YIELD:
-        printf("%-20s | LUA_YIELD\n", __func__);
-        break;
+    if (res != LUA_OK && res != LUA_YIELD)
+      return luaL_error(LG, "coroutine error: %s", lua_tostring(L, -1));
 
-      default:
-        return luaL_error(LGlobal, "coroutine error: %s", lua_tostring(L, -1));
-    }
+    if (res == LUA_OK)
+      break;
 
     luabug_resume_all();
-    luabug_gc(LGlobal);
+    luabug_gc(LG);
   }
 
   luabug_resume_all();
-  luaL_unref(LGlobal, LUA_REGISTRYINDEX, Lref);
-  luabug_gc(LGlobal);
-  lua_close(LGlobal);
+  luaL_unref(LG, LUA_REGISTRYINDEX, Lref);
+  luabug_gc(LG);
+  lua_close(LG);
   return 0;
 }
