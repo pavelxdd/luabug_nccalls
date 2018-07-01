@@ -1,6 +1,6 @@
 # luabug_nccalls
 
-A small C program which reproduces a bug in Lua when a negative number is assigned to `L->nCcalls` (unsigned short), so it becomes `>65000`.
+A small C program which reproduces a bug in Lua when a negative number is assigned to `L->nCcalls` (unsigned short), so it becomes `>=LUAI_MAXCCALLS`.
 
 To build without a patch:
 

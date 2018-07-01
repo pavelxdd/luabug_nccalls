@@ -6,6 +6,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
+#include <llimits.h>
 #include <lstate.h>
 
 void luaU_assert(const char *msg, const char *file, const int line)
@@ -27,10 +28,12 @@ static Ldata *Llist = NULL;
 static inline void luabug_gc(lua_State *L)
 {
   lua_assert(L);
-  printf("%-20s | L=%p, nCcalls=%d, nci=%d\n", "before lua_gc", L, L->nCcalls, L->nci);
+  printf("%-20s | L=%p, nCcalls=%d/%d, nci=%d\n", "before lua_gc",
+         L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
   lua_gc(L, LUA_GCCOLLECT, 0);
-  printf("%-20s | L=%p, nCcalls=%d, nci=%d\n", "after lua_gc", L, L->nCcalls, L->nci);
-  lua_assert(L->nCcalls < 65000);
+  printf("%-20s | L=%p, nCcalls=%d/%d, nci=%d\n", "after lua_gc",
+         L, L->nCcalls, LUAI_MAXCCALLS, L->nci);
+  lua_assert(L->nCcalls < LUAI_MAXCCALLS);
 }
 
 static lua_State *luabug_newthread(lua_State *L)
